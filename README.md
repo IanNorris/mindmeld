@@ -91,7 +91,7 @@ Then open `http://localhost:8000`. The web UI offers two modes:
   human-vs-human match.
 
 The web UI also shows each **AI's reasoning streaming live** ("thinking" panes)
-as it decides its word, via a server-sent-events (SSE) stream.
+as it decides its word, pushed live over a WebSocket (no polling).
 
 ### Configuration
 
@@ -132,7 +132,8 @@ python tests/test_logic.py      # or: pytest
 | `mindmeld/players.py`    | `HumanPlayer` and `AIPlayer` (Copilot SDK, streaming). |
 | `mindmeld/engine.py`     | Round loop and convergence detection. |
 | `mindmeld/cli.py`        | Terminal setup menu + game presentation. |
-| `mindmeld/web.py`        | Web server: matchmaking lobby, games, SSE stream. |
+| `mindmeld/web.py`        | Web server: matchmaking lobby, games, WebSocket push. |
+| `mindmeld/wsutil.py`     | Minimal dependency-free WebSocket (RFC 6455) helpers. |
 | `mindmeld/web_page.py`   | Single-page web UI (local + online modes). |
 | `tools/record_demo.py`   | Playwright script that records a playthrough. |
 | `tests/`                 | Pure-logic tests (no network). |

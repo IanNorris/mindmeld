@@ -156,9 +156,11 @@ let MODELS = [];
 let STATE = null;
 let MODE = null;            // 'online' | 'local'
 let ME = {slot:null, token:null};
-let ES = null;             // EventSource for live updates
-let TICKET = null, POLL = null;
+let ES = null;             // (legacy) unused; live updates now use WebSocket
+let WS = null;             // single WebSocket for lobby + game events
+let TICKET = null;
 let liveText = {p1:'', p2:''};
+let pendingEnter = false;  // show game view on the next 'state' push
 
 const $ = s => document.querySelector(s);
 const el = (t,p={}) => Object.assign(document.createElement(t), p);
@@ -193,6 +195,43 @@ function fillModels(sel){
   MODELS.forEach(m => sel.appendChild(el('option',{value:m.id,textContent:m.name})));
 }
 
+/* ---------------- WebSocket (replaces SSE + lobby polling) ---------------- */
+function wsURL(){
+  return (location.protocol==='https:'?'wss://':'ws://') + location.host + '/ws';
+}
+function openWS(subscribe){
+  if(WS){ try { WS.close(); } catch(e){} }
+  WS = new WebSocket(wsURL());
+  WS.onopen = () => WS.send(JSON.stringify(subscribe));
+  WS.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch(e){ return; }
+    handleWS(m);
+  };
+}
+function handleWS(m){
+  if(m.type==='error'){ $('#err').textContent = m.error||'Server error'; return; }
+  if(m.type==='ticket'){            // matched after waiting
+    ME = {slot:m.slot, token:m.token};
+    pendingEnter = true;            // game view appears on the next 'state'
+    return;
+  }
+  if(m.kind==='state'){
+    STATE = m.state;
+    if(pendingEnter || $('#game').style.display==='none'){ enterGameView(); }
+    pendingEnter = false;
+    render();
+    return;
+  }
+  if(m.kind==='round_start'){ liveText = {p1:'', p2:''}; renderPanes('thinking'); return; }
+  if(m.kind==='delta'){ liveText[m.slot] = (liveText[m.slot]||'') + m.text; renderPanes('thinking'); return; }
+  if(m.kind==='submitted'){
+    markSubmitted(m.slot);
+    if(MODE==='online' && m.slot===ME.slot) render();  // show my "waiting" state
+    return;
+  }
+  // round_done is followed by a 'state' push, so nothing to do here.
+}
+
 /* ---------------- online matchmaking ---------------- */
 async function findMatch(){
   const name = $('#onName').value.trim() || 'Player';
@@ -202,20 +241,18 @@ async function findMatch(){
   TICKET = t.ticket;
   if(t.status==='matched'){ onMatched(t); return; }
   show('waiting');
-  POLL = setInterval(async ()=>{
-    const p = await postJSON('/api/poll', {ticket:TICKET});
-    if(p.status==='matched'){ clearInterval(POLL); POLL=null; onMatched(p); }
-  }, 1200);
+  // No polling: wait for a push over the WebSocket.
+  openWS({type:'watch_ticket', ticket:TICKET});
 }
 async function cancelMatch(){
-  if(POLL){ clearInterval(POLL); POLL=null; }
+  if(WS){ try { WS.close(); } catch(e){} WS=null; }
   if(TICKET) await postJSON('/api/cancel', {ticket:TICKET});
   location.reload();
 }
-async function onMatched(t){
+function onMatched(t){
   ME = {slot:t.slot, token:t.token};
-  const st = await postJSON('/api/state', {game_id:t.game_id});
-  openGame(st);
+  pendingEnter = true;
+  openWS({type:'watch_game', game_id:t.game_id});
 }
 
 /* ---------------- local mode ---------------- */
@@ -252,41 +289,19 @@ async function startLocal(){
                 max_rounds: parseInt($('#maxRounds').value)||12};
   const st = await postJSON('/api/new', body);
   ME = {slot:null, token:null};
-  openGame(st);
+  STATE = st;
+  enterGameView();
+  render();
+  openWS({type:'watch_game', game_id:st.game_id});  // live updates via push
 }
 
 /* ---------------- shared game view ---------------- */
-function openGame(st){
-  STATE = st;
+function enterGameView(){
   show('game');
-  $('#vs').innerHTML = `${escapeHtml(st.p1.label)} &nbsp;vs&nbsp; ${escapeHtml(st.p2.label)}`
-    + (MODE==='online' ? `<span class="tag">you are ${ME.slot==='p1'?st.p1.name:st.p2.name}</span>` : '');
-  $('#h1').textContent = st.p1.name;
-  $('#h2').textContent = st.p2.name;
-  connectSSE(st.game_id);
-  render();
-}
-
-function connectSSE(gameId){
-  if(ES) ES.close();
-  ES = new EventSource('/api/stream?game_id='+encodeURIComponent(gameId));
-  ES.onmessage = ev => {
-    let d; try { d = JSON.parse(ev.data); } catch(e){ return; }
-    if(d.kind==='round_start'){
-      liveText = {p1:'', p2:''}; renderPanes('thinking');
-    } else if(d.kind==='delta'){
-      liveText[d.slot] = (liveText[d.slot]||'') + d.text; renderPanes('thinking');
-    } else if(d.kind==='submitted'){
-      markSubmitted(d.slot);
-    } else if(d.kind==='round_done'){
-      // Refresh authoritative state so both browsers update together.
-      refreshState();
-    }
-  };
-}
-async function refreshState(){
-  const st = await postJSON('/api/state', {game_id:STATE.game_id});
-  STATE = st; render();
+  $('#vs').innerHTML = `${escapeHtml(STATE.p1.label)} &nbsp;vs&nbsp; ${escapeHtml(STATE.p2.label)}`
+    + (MODE==='online' ? `<span class="tag">you are ${ME.slot==='p1'?STATE.p1.name:STATE.p2.name}</span>` : '');
+  $('#h1').textContent = STATE.p1.name;
+  $('#h2').textContent = STATE.p2.name;
 }
 
 function slotIsAI(slot){

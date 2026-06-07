@@ -10,13 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import select
 import threading
-import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from copilot import CopilotClient
 
+from . import wsutil
 from .models import list_models
 from .players import AIPlayer, extract_word, normalize
 from .web_page import INDEX_HTML
@@ -34,6 +35,17 @@ _games: dict[str, "WebGame"] = {}
 _tickets: dict[str, dict] = {}
 _waiting: list[str] = []          # ticket ids waiting for a human opponent
 _lobby_lock = threading.Lock()
+# Per-ticket events, set when a ticket transitions to "matched" so a waiting
+# WebSocket can wake immediately instead of polling.
+_ticket_events: dict[str, threading.Event] = {}
+
+
+def _ticket_event(tid: str) -> threading.Event:
+    ev = _ticket_events.get(tid)
+    if ev is None:
+        ev = threading.Event()
+        _ticket_events[tid] = ev
+    return ev
 
 
 def _new_token() -> str:
@@ -88,6 +100,8 @@ def _pair_humans(t1: dict, t2: dict) -> None:
               opponent=t2["name"])
     t2.update(status="matched", game_id=game.id, slot="p2", token=tok2,
               opponent=t1["name"])
+    _ticket_event(t1["id"]).set()
+    _ticket_event(t2["id"]).set()
 
 
 def _start_match(ticket: dict, ai_opponent: bool, model: str | None) -> None:
@@ -102,6 +116,7 @@ def _start_match(ticket: dict, ai_opponent: bool, model: str | None) -> None:
     _games[game.id] = game
     ticket.update(status="matched", game_id=game.id, slot="p1", token=tok,
                   opponent=f"AI ({model_name})")
+    _ticket_event(ticket["id"]).set()
 
 
 def cancel_ticket(tid: str) -> None:
@@ -186,7 +201,7 @@ class WebGame:
             self._subscribers.discard(q)
 
     def emit(self, event: dict) -> None:
-        """Push an event to every SSE subscriber (drops if a queue is full)."""
+        """Push an event to every subscriber (drops if a queue is full)."""
         with self._sub_lock:
             subs = list(self._subscribers)
         for q in subs:
@@ -194,6 +209,10 @@ class WebGame:
                 q.put_nowait(event)
             except queue.Full:
                 pass
+
+    def emit_state(self) -> None:
+        """Broadcast the full authoritative game state to all subscribers."""
+        self.emit({"kind": "state", "state": self.public_state()})
 
     def _delta_cb(self, slot: str):
         # Called from the asyncio loop thread as fragments stream in.
@@ -357,6 +376,8 @@ class WebGame:
                 self.finished = True
         self.emit({"kind": "round_done", "round": self.round_no,
                    "w1": w1, "w2": w2, "matched": normalize(w1) == normalize(w2)})
+        # Broadcast the new authoritative state so all clients update via push.
+        self.emit_state()
         return None
 
     def _clear_delta_cbs(self) -> None:
@@ -401,37 +422,83 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, INDEX_HTML.encode(), "text/html; charset=utf-8")
         elif self.path == "/api/models":
             self._json([{"id": m.id, "name": m.name} for m in _models])
-        elif self.path.startswith("/api/stream"):
-            self._sse()
+        elif self.path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
+        elif self.path == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
+            self._handle_ws()
         else:
             self._json({"error": "not found"}, 404)
 
-    def _sse(self):
-        from urllib.parse import parse_qs, urlparse
-        gid = (parse_qs(urlparse(self.path).query).get("game_id") or [""])[0]
-        game = _games.get(gid)
-        if not game:
-            return self._json({"error": "unknown game"}, 404)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.end_headers()
-        q = game.subscribe()
+    # ------------------------------------------------------------------ WS ---
+
+    def _handle_ws(self):
+        key = self.headers.get("Sec-WebSocket-Key")
+        if not key:
+            return self._json({"error": "bad websocket request"}, 400)
+        # We hijack the socket for the WebSocket; don't let the HTTP loop reuse it.
+        self.close_connection = True
+        self.connection.sendall(wsutil.handshake_response(key))
+        sock = self.connection
         try:
-            self.wfile.write(b": connected\n\n")
-            self.wfile.flush()
-            while True:
-                try:
-                    ev = q.get(timeout=15)
-                except queue.Empty:
-                    self.wfile.write(b": ping\n\n")  # keep-alive
-                    self.wfile.flush()
-                    continue
-                self.wfile.write(f"data: {json.dumps(ev)}\n\n".encode())
-                self.wfile.flush()
+            first = wsutil.recv(sock)
+            if not first or first[0] == wsutil.OP_CLOSE:
+                return
+            try:
+                msg = json.loads(first[1].decode() or "{}")
+            except Exception:
+                return
+            if msg.get("type") == "watch_ticket":
+                gid = self._ws_wait_ticket(sock, msg.get("ticket", ""))
+                if gid:
+                    self._ws_watch_game(sock, gid)
+            elif msg.get("type") == "watch_game":
+                self._ws_watch_game(sock, msg.get("game_id", ""))
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+    def _ws_wait_ticket(self, sock, tid: str) -> str | None:
+        """Block until the ticket is matched, then push it. Returns its game_id."""
+        ev = _ticket_event(tid)
+        while True:
+            t = _tickets.get(tid)
+            if not t:
+                wsutil.send(sock, json.dumps({"type": "error", "error": "unknown ticket"}))
+                return None
+            if t["status"] != "waiting":
+                wsutil.send(sock, json.dumps({"type": "ticket", **_ticket_view(t)}))
+                return t["game_id"]
+            # Wake on match (event) or check the socket for a client close.
+            ev.wait(0.5)
+            r, _, _ = select.select([sock], [], [], 0)
+            if r:
+                frame = wsutil.recv(sock)
+                if frame is None or frame[0] == wsutil.OP_CLOSE:
+                    return None
+
+    def _ws_watch_game(self, sock, gid: str):
+        game = _games.get(gid)
+        if not game:
+            wsutil.send(sock, json.dumps({"type": "error", "error": "unknown game"}))
+            return
+        # Send the current state immediately, then stream events as they occur.
+        wsutil.send(sock, json.dumps({"kind": "state", "state": game.public_state()}))
+        q = game.subscribe()
+        try:
+            while True:
+                r, _, _ = select.select([sock], [], [], 0.2)
+                if r:
+                    frame = wsutil.recv(sock)
+                    if frame is None or frame[0] == wsutil.OP_CLOSE:
+                        break
+                    if frame[0] == wsutil.OP_PING:
+                        wsutil.send(sock, frame[1], opcode=wsutil.OP_PONG)
+                while True:
+                    try:
+                        ev = q.get_nowait()
+                    except queue.Empty:
+                        break
+                    wsutil.send(sock, json.dumps(ev))
         finally:
             game.unsubscribe(q)
 
