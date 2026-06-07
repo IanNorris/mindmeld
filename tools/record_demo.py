@@ -28,6 +28,9 @@ AI_MODEL = os.environ.get("DEMO_AI_MODEL", "gemini-3.5-flash")   # fast opponent
 HUMAN_MODEL = os.environ.get("DEMO_HUMAN_MODEL", "gpt-5-mini")    # fast helper
 OUT_DIR = os.environ.get("DEMO_OUT", "/workspace/mindmeld/media")
 DEMO_ROUNDS = int(os.environ.get("DEMO_ROUNDS", "6"))
+# Force the human's opening word (e.g. a deliberately off-beat one so the game
+# takes a few rounds to converge). Empty -> let the helper choose.
+DEMO_OPENER = os.environ.get("DEMO_OPENER", "").strip()
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 
@@ -128,7 +131,11 @@ async def main():
                 except Exception:
                     break
                 state = await page.evaluate("() => STATE")
-                word = await brain.pick(state)
+                # Force the opener on the very first human turn if requested.
+                if DEMO_OPENER and state.get("round_no", 0) == 0:
+                    word = DEMO_OPENER
+                else:
+                    word = await brain.pick(state)
                 await page.fill(".wordin", word)
                 await page.wait_for_timeout(500)
                 await page.click("#goBtn")

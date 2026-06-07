@@ -20,8 +20,11 @@ each AI player uses, **at the start of every game**.
 
 ![Mind Meld demo — human vs Gemini 3.5 Flash](media/mindmeld-demo.gif)
 
-*A human (left) vs an AI on Gemini 3.5 Flash, converging on "rain" — recorded
-from the web UI with Playwright. See [Recording a demo](#recording-a-demo).*
+*A human (left) opening with "sausage" vs an AI on Gemini 3.5 Flash — it takes
+five rounds (sausage → link → leash → dachshund → **park**) to converge, with
+the AI tracking the sausage → dog → wiener theme. Recorded from the web UI with
+Playwright; see [Recording a demo](#recording-a-demo).*
+
 
 
 ## Requirements
@@ -137,6 +140,8 @@ python tests/test_logic.py      # or: pytest
 to record a human-vs-AI game as a video. The "human" side is auto-played by a
 fast helper model so the recording converges quickly; the AI opponent uses a
 fast flash/mini model too (configurable via `DEMO_AI_MODEL` / `DEMO_HUMAN_MODEL`).
+Set `DEMO_OPENER` to force the human's first word (e.g. `DEMO_OPENER=sausage`
+for a game that takes a few rounds), and `DEMO_ROUNDS` to cap the length.
 
 ```bash
 pip install playwright imageio-ffmpeg
