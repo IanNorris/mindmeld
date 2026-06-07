@@ -1,3 +1,25 @@
+Metadata-Version: 2.4
+Name: mindmeld-game
+Version: 1.0.0
+Summary: Mind Meld — a word-convergence game with human and Copilot SDK AI players (terminal + web).
+Author: Ian Norris
+License: MIT
+Project-URL: Repository, https://github.com/IanNorris/mindmeld
+Keywords: game,word-game,copilot,ai,convergence
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Environment :: Console
+Classifier: Topic :: Games/Entertainment
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: github-copilot-sdk>=0.3
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Dynamic: license-file
+
 # Mind Meld 🧠✨
 
 A word-convergence game. Two players each reveal one word per round **at the
@@ -16,40 +38,11 @@ Either player can be a **human** (typing in the terminal) or an **AI** powered
 by the GitHub Copilot SDK — and you choose the setup, including which AI model
 each AI player uses, **at the start of every game**.
 
-## Requirements
-
-- **Python ≥ 3.11**
-- The **GitHub Copilot CLI Python SDK** (`github-copilot-sdk`, imported as
-  `copilot`) — installed automatically by the steps below.
-- A working **GitHub Copilot** authentication. The SDK talks to the Copilot CLI
-  backend, so you need either:
-  - the [GitHub Copilot CLI](https://github.com/github/copilot-cli) installed
-    and signed in (`copilot` on your `PATH`), or
-  - a `GITHUB_TOKEN` (or `COPILOT_SDK_AUTH_TOKEN`) in your environment with
-    Copilot access.
-
-## Install
-
-```bash
-git clone https://github.com/IanNorris/mindmeld.git
-cd mindmeld
-
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-pip install -e .                   # installs the package + Copilot SDK
-```
-
-Prefer not to install the package? `pip install -r requirements.txt` pulls just
-the runtime dependency, and you can then run the modules directly (see below).
-
 ## Running
 
 ### Terminal
 
 ```bash
-mindmeld            # console entry point (installed by `pip install -e .`)
-# or, without installing the package:
 python -m mindmeld
 ```
 
@@ -60,9 +53,7 @@ works: Human vs Human, Human vs AI, or AI vs AI.
 ### Web / dev server
 
 ```bash
-mindmeld-web        # console entry point
-# or:
-python -m mindmeld.web        # or ./run_server.sh
+python -m mindmeld.web         # or ./run_server.sh
 ```
 
 Then open `http://localhost:8000`. The web UI offers two modes:
@@ -78,15 +69,13 @@ Then open `http://localhost:8000`. The web UI offers two modes:
 The web UI also shows each **AI's reasoning streaming live** ("thinking" panes)
 as it decides its word, via a server-sent-events (SSE) stream.
 
-### Configuration
+### Environment
 
-- **Authentication** — the SDK uses your Copilot CLI session or a
-  `GITHUB_TOKEN` / `COPILOT_SDK_AUTH_TOKEN` in the environment (see
-  [Requirements](#requirements)).
-- **`MINDMELD_NOCLEAR=1`** disables the terminal's between-turn screen clears
+- Requires the `copilot` Python SDK (bundled in this sandbox) and a valid
+  Copilot auth token in the environment (`COPILOT_SDK_AUTH_TOKEN` /
+  `GITHUB_TOKEN`).
+- `MINDMELD_NOCLEAR=1` disables the terminal's between-turn screen clears
   (useful for transcripts, logging, or piping output).
-- The web server binds to `0.0.0.0:8000` by default; edit the `serve()` call in
-  `mindmeld/web.py` (or import and call `serve(host, port)`) to change it.
 
 ## How the AI plays
 
@@ -98,15 +87,6 @@ full shared word history and the previous round's two words and replying in a
 `THINKING:` / `WORD:` format so its reasoning can be shown. Separate sessions
 keep two AIs from "seeing" each other's reasoning — they only know the revealed
 words, exactly like human players.
-
-## Tests
-
-Pure-logic tests (no network/SDK calls) cover word parsing and the round/
-convergence engine via a scripted player:
-
-```bash
-python tests/test_logic.py      # or: pytest
-```
 
 ## Project layout
 
@@ -120,10 +100,4 @@ python tests/test_logic.py      # or: pytest
 | `mindmeld/web.py`        | Web server: matchmaking lobby, games, SSE stream. |
 | `mindmeld/web_page.py`   | Single-page web UI (local + online modes). |
 | `tests/`                 | Pure-logic tests (no network). |
-| `pyproject.toml`         | Packaging, dependencies, `mindmeld` / `mindmeld-web` entry points. |
-
-## License
-
-[MIT](LICENSE).
-
 

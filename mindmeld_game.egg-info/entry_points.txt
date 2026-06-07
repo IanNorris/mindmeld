@@ -1,0 +1,3 @@
+[console_scripts]
+mindmeld = mindmeld.cli:cli
+mindmeld-web = mindmeld.web:serve
