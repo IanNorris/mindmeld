@@ -16,6 +16,14 @@ Either player can be a **human** (typing in the terminal) or an **AI** powered
 by the GitHub Copilot SDK — and you choose the setup, including which AI model
 each AI player uses, **at the start of every game**.
 
+## Demo
+
+![Mind Meld demo — human vs Gemini 3.5 Flash](media/mindmeld-demo.gif)
+
+*A human (left) vs an AI on Gemini 3.5 Flash, converging on "rain" — recorded
+from the web UI with Playwright. See [Recording a demo](#recording-a-demo).*
+
+
 ## Requirements
 
 - **Python ≥ 3.11**
@@ -119,8 +127,28 @@ python tests/test_logic.py      # or: pytest
 | `mindmeld/cli.py`        | Terminal setup menu + game presentation. |
 | `mindmeld/web.py`        | Web server: matchmaking lobby, games, SSE stream. |
 | `mindmeld/web_page.py`   | Single-page web UI (local + online modes). |
+| `tools/record_demo.py`   | Playwright script that records a playthrough. |
 | `tests/`                 | Pure-logic tests (no network). |
 | `pyproject.toml`         | Packaging, dependencies, `mindmeld` / `mindmeld-web` entry points. |
+
+## Recording a demo
+
+`tools/record_demo.py` drives the web UI with [Playwright](https://playwright.dev/python/)
+to record a human-vs-AI game as a video. The "human" side is auto-played by a
+fast helper model so the recording converges quickly; the AI opponent uses a
+fast flash/mini model too (configurable via `DEMO_AI_MODEL` / `DEMO_HUMAN_MODEL`).
+
+```bash
+pip install playwright imageio-ffmpeg
+playwright install chromium          # plus system deps; see Playwright docs
+
+mindmeld-web &                       # start the server on :8000
+python tools/record_demo.py          # writes media/*.webm
+```
+
+Convert the recording to a GIF/MP4 with ffmpeg (the committed
+`media/mindmeld-demo.gif` was produced this way). On NixOS, run the script
+inside `tools/demo-shell.nix` so headless Chromium has fontconfig and fonts.
 
 ## License
 

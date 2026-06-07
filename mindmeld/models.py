@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Models flagged "Internal only" in their display name are noisy for a game
-# menu, so we hide them by default.
-_HIDE_SUBSTR = ("internal only",)
+# Internal/experimental models are noisy for a game menu, so we hide them.
+# Matched (case-insensitively) against both the model id and its display name.
+_HIDE_SUBSTR = ("internal",)
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class Model:
 
 
 async def list_models(client) -> list[Model]:
-    """Return selectable models via the raw RPC, skipping internal-only ones."""
+    """Return selectable models via the raw RPC, skipping internal ones."""
     resp = await client._client.request("models.list", {})
     out: list[Model] = []
     for m in resp.get("models", []):
@@ -29,7 +29,8 @@ async def list_models(client) -> list[Model]:
         name = m.get("name") or mid
         if not mid:
             continue
-        if any(s in name.lower() for s in _HIDE_SUBSTR):
+        haystack = f"{mid} {name}".lower()
+        if any(s in haystack for s in _HIDE_SUBSTR):
             continue
         out.append(Model(id=mid, name=name))
     return out
