@@ -168,8 +168,15 @@ class AIPlayer(Player):
         session = await self._ensure_session()
         prompt = self._build_prompt(round_no, you, partner, used)
         self.last_reasoning = ""
+        last_err = ""
         for attempt in range(3):
-            resp = await session.send_and_wait(prompt, timeout=60)
+            try:
+                resp = await session.send_and_wait(prompt, timeout=45)
+            except Exception as e:  # TimeoutError, connection errors, etc.
+                last_err = f"{type(e).__name__}: {e}"
+                prompt = ("Your previous turn did not complete in time. Reply NOW, "
+                          "briefly, in THINKING: / WORD: format with one unused word.")
+                continue
             content = ""
             if resp and isinstance(resp.data, AssistantMessageData):
                 content = resp.data.content or ""
@@ -181,8 +188,11 @@ class AIPlayer(Player):
                 f"That response ('{content.strip()[:40]}') was empty or already "
                 "used. Reply in THINKING: / WORD: format with a NEW, unused word."
             )
-        # Fallback so the game never deadlocks on a stubborn model.
-        self.last_reasoning = "(no valid word produced; used a placeholder)"
+        # Fallback so the game never deadlocks on a stubborn or slow model.
+        self.last_reasoning = (
+            f"(model did not return a usable word; {last_err})" if last_err
+            else "(model did not return a usable word; used a placeholder)"
+        )
         return f"word{round_no}"
 
     async def close(self) -> None:

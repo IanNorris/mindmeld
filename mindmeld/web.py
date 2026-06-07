@@ -34,9 +34,9 @@ def _run_loop() -> None:
     _loop.run_forever()
 
 
-def _submit(coro):
+def _submit(coro, timeout: float | None = None):
     """Run a coroutine on the background loop from a handler thread."""
-    return asyncio.run_coroutine_threadsafe(coro, _loop).result()
+    return asyncio.run_coroutine_threadsafe(coro, _loop).result(timeout)
 
 
 async def _bootstrap() -> None:
@@ -145,6 +145,8 @@ class WebGame:
             )
         except ValueError as e:
             return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001 — never corrupt game state on a round
+            return {"error": f"Round failed ({type(e).__name__}: {e}). Try again."}
 
         self.hist1.append(w1)
         self.hist2.append(w2)
@@ -213,7 +215,10 @@ class Handler(BaseHTTPRequestHandler):
                 game = _games.get(data.get("game_id"))
                 if not game:
                     return self._json({"error": "unknown game"}, 404)
-                err = _submit(game.play_round(data.get("words", {})))
+                try:
+                    err = _submit(game.play_round(data.get("words", {})), timeout=180)
+                except Exception as e:  # noqa: BLE001
+                    err = {"error": f"Round error ({type(e).__name__}: {e}). Try again."}
                 state = game.public_state()
                 if err:
                     state["error"] = err["error"]

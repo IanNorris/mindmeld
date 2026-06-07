@@ -241,9 +241,24 @@ async function submitRound(words){
   const go = $('#goBtn'); if(go){ go.disabled=true; go.textContent='Thinking…'; }
   $('#turn').insertAdjacentHTML('beforeend',
     '<p class="hint spin" id="spin">⏳ waiting for both words…</p>');
-  const res = await postJSON('/api/round', {game_id:STATE.game_id, words});
-  STATE = res;
-  render();
+  let res;
+  try {
+    res = await postJSON('/api/round', {game_id:STATE.game_id, words});
+  } catch(e){
+    res = {error: 'Network error contacting the server — please try again.'};
+  }
+  const spin = $('#spin'); if(spin) spin.remove();
+  // A well-formed response carries the full game state (it has `rounds`).
+  if(res && Array.isArray(res.rounds)){
+    STATE = res;
+    render();
+  } else {
+    // Error-only / malformed response: keep the previous good state, attach the
+    // error, and re-render so the correct turn UI (and button) comes back. The
+    // spinner never stays stuck.
+    STATE.error = (res && res.error) || 'Unexpected error — try again.';
+    render();
+  }
 }
 
 init();
