@@ -42,9 +42,35 @@ SYSTEM_MESSAGE = (
     "word. Each round you look at the two words from the previous round and pick a "
     "single word that is a natural midpoint or strong bridge between them — the word "
     "you believe your partner is most likely to ALSO pick. Never reuse a word that "
-    "either player has already said. Always respond with EXACTLY one single English "
-    "word: lowercase, no punctuation, no quotes, no explanation."
+    "either player has already said.\n\n"
+    "Respond in EXACTLY this two-line format and nothing else:\n"
+    "THINKING: <one short sentence explaining why this word bridges the two and why "
+    "your partner is likely to pick it too>\n"
+    "WORD: <a single lowercase English word, no punctuation>"
 )
+
+_WORD_LINE_RE = re.compile(r"(?im)^\s*WORD\s*:\s*(.+)$")
+_THINK_LINE_RE = re.compile(r"(?im)^\s*THINKING\s*:\s*(.+)$")
+
+
+def parse_ai_reply(text: str) -> tuple[str, str]:
+    """Return (word, reasoning) from a model reply in THINKING/WORD format.
+
+    Falls back gracefully if the model ignores the format.
+    """
+    text = text or ""
+    wm = _WORD_LINE_RE.search(text)
+    tm = _THINK_LINE_RE.search(text)
+    reasoning = tm.group(1).strip() if tm else ""
+    if wm:
+        word = extract_word(wm.group(1))
+    else:
+        # No WORD: line — take the last word of the whole reply as a fallback.
+        word = extract_word(text)
+        if not reasoning and word:
+            reasoning = text.strip()
+    return word, reasoning
+
 
 
 class Player(ABC):
@@ -102,6 +128,8 @@ class AIPlayer(Player):
         self.model_id = model_id
         self.model_name = model_name
         self._session = None
+        # Reasoning captured from the most recent get_word() call.
+        self.last_reasoning: str = ""
 
     @property
     def label(self) -> str:
@@ -120,7 +148,8 @@ class AIPlayer(Player):
     def _build_prompt(self, round_no, you, partner, used) -> str:
         if round_no == 1:
             return ("Round 1. No words have been said yet. Open the game with one "
-                    "common, fairly generic single word. Reply with only the word.")
+                    "common, fairly generic single word. Respond using the "
+                    "THINKING: / WORD: format.")
         lines = [f"Round {round_no}.", "History (oldest first):"]
         for i, (y, p) in enumerate(zip(you, partner), start=1):
             lines.append(f"  Round {i}: you said '{y}', partner said '{p}'")
@@ -131,26 +160,29 @@ class AIPlayer(Player):
             "Pick ONE new word that bridges those two and that your partner is "
             "most likely to also pick this round.",
             f"You may NOT reuse any of these already-used words: {used_list}.",
-            "Reply with only the single word.",
+            "Respond using the THINKING: / WORD: format.",
         ]
         return "\n".join(lines)
 
     async def get_word(self, round_no, you, partner, used) -> str:
         session = await self._ensure_session()
         prompt = self._build_prompt(round_no, you, partner, used)
+        self.last_reasoning = ""
         for attempt in range(3):
             resp = await session.send_and_wait(prompt, timeout=60)
             content = ""
             if resp and isinstance(resp.data, AssistantMessageData):
                 content = resp.data.content or ""
-            word = extract_word(content)
+            word, reasoning = parse_ai_reply(content)
             if word and normalize(word) not in used:
+                self.last_reasoning = reasoning
                 return word
             prompt = (
                 f"That response ('{content.strip()[:40]}') was empty or already "
-                "used. Reply with exactly ONE new, unused single English word."
+                "used. Reply in THINKING: / WORD: format with a NEW, unused word."
             )
         # Fallback so the game never deadlocks on a stubborn model.
+        self.last_reasoning = "(no valid word produced; used a placeholder)"
         return f"word{round_no}"
 
     async def close(self) -> None:

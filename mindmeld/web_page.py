@@ -30,10 +30,15 @@ INDEX_HTML = r"""<!DOCTYPE html>
   button:disabled { opacity:.5; cursor:not-allowed; }
   .btns { display:flex; gap:10px; margin-top:16px; flex-wrap:wrap; }
   table { width:100%; border-collapse:collapse; margin-top:8px; }
-  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line);
+          vertical-align:top; }
   th { color:#9fb0c9; font-weight:600; font-size:12px; text-transform:uppercase; }
-  .match td { color:var(--accent); font-weight:800; }
-  .word { font-weight:700; }
+  .match td { color:var(--accent); }
+  .match .word { font-weight:800; }
+  td.rnum { color:#7e8db0; font-weight:700; }
+  .word { font-weight:700; font-size:16px; }
+  .think { color:#9fb0c9; font-size:12px; margin-top:3px; line-height:1.35;
+           max-width:230px; font-style:italic; }
   .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px;
           background:#23324e; color:#cdd9ee; }
   .banner { text-align:center; padding:16px; border-radius:12px; font-weight:800;
@@ -156,8 +161,13 @@ function render(){
   const rows = $('#rows'); rows.innerHTML='';
   STATE.rounds.forEach(r => {
     const tr = el('tr'); if(r.matched) tr.className='match';
-    tr.innerHTML = `<td>${r.round}</td><td class="word">${r.w1}</td>`+
-                   `<td class="word">${r.w2}</td>`+
+    const cell = (word, reason) => {
+      const think = reason
+        ? `<div class="think">💭 ${escapeHtml(reason)}</div>` : '';
+      return `<td><div class="word">${escapeHtml(word)}</div>${think}</td>`;
+    };
+    tr.innerHTML = `<td class="rnum">${r.round}</td>`+
+                   cell(r.w1, r.r1) + cell(r.w2, r.r2) +
                    `<td>${r.matched?'🧠 meld!':''}</td>`;
     rows.appendChild(tr);
   });
@@ -168,6 +178,11 @@ function render(){
   if(STATE.finished){ renderFinished(); return; }
   $('#banner').innerHTML='';
   renderTurn();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function renderFinished(){

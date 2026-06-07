@@ -61,6 +61,9 @@ class WebGame:
         self.hist2: list[str] = []
         self.used: set[str] = set()
         self.round_no = 0
+        # Per-round reasoning, aligned with hist1/hist2 ("" for human turns).
+        self.reason1: list[str] = []
+        self.reason2: list[str] = []
         self.finished = False
         self.converged = False
         self.final_word: str | None = None
@@ -86,10 +89,14 @@ class WebGame:
         return p.name if self._is_ai(p) else p["name"]
 
     def public_state(self) -> dict:
-        rounds = [
-            {"round": i + 1, "w1": a, "w2": b, "matched": normalize(a) == normalize(b)}
-            for i, (a, b) in enumerate(zip(self.hist1, self.hist2))
-        ]
+        rounds = []
+        for i, (a, b) in enumerate(zip(self.hist1, self.hist2)):
+            rounds.append({
+                "round": i + 1, "w1": a, "w2": b,
+                "matched": normalize(a) == normalize(b),
+                "r1": self.reason1[i] if i < len(self.reason1) else "",
+                "r2": self.reason2[i] if i < len(self.reason2) else "",
+            })
         return {
             "game_id": self.id,
             "max_rounds": self.max_rounds,
@@ -141,6 +148,8 @@ class WebGame:
 
         self.hist1.append(w1)
         self.hist2.append(w2)
+        self.reason1.append(self.p1.last_reasoning if self._is_ai(self.p1) else "")
+        self.reason2.append(self.p2.last_reasoning if self._is_ai(self.p2) else "")
         self.round_no = nxt
         if normalize(w1) == normalize(w2):
             self.finished = True
