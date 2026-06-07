@@ -18,15 +18,15 @@ each AI player uses, **at the start of every game**.
 
 ## Demo
 
-<video src="https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4" controls width="600">
-  Your browser can't play this video inline —
-  <a href="https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4">download the MP4</a>.
-</video>
+[![Watch the demo — human vs Gemini 3.5 Flash](media/demo-poster.png)](https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4)
+
+▶ **[Watch the 56-second MP4](https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4)** (click the image above).
 
 *A human (left) opening with "sausage" vs an AI on Gemini 3.5 Flash — it takes
 five rounds (sausage → link → leash → dachshund → **park**) to converge, with
 the AI tracking the sausage → dog → wiener theme. Recorded from the web UI with
 Playwright; see [Recording a demo](#recording-a-demo).*
+
 
 
 
