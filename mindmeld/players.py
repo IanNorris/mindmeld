@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import random
 import re
 from abc import ABC, abstractmethod
 
 from copilot.generated.session_events import AssistantMessageData
 from copilot.session import PermissionHandler
+
+from .dictionary import random_word
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 
@@ -130,6 +133,7 @@ class AIPlayer(Player):
         self._session = None
         # Reasoning captured from the most recent get_word() call.
         self.last_reasoning: str = ""
+        self._rng = random.Random()
 
     @property
     def label(self) -> str:
@@ -165,6 +169,14 @@ class AIPlayer(Player):
         return "\n".join(lines)
 
     async def get_word(self, round_no, you, partner, used) -> str:
+        # Round 1: open with a RANDOM dictionary word instead of asking the
+        # model. Models are too consistent on openers (always "time", "center",
+        # …), which makes games repetitive. After the opener the model iterates
+        # normally, bridging toward convergence.
+        if round_no == 1:
+            word = random_word(self._rng, exclude=used)
+            self.last_reasoning = f"Opened with a random dictionary word: '{word}'."
+            return word
         session = await self._ensure_session()
         prompt = self._build_prompt(round_no, you, partner, used)
         self.last_reasoning = ""
