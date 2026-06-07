@@ -18,12 +18,16 @@ each AI player uses, **at the start of every game**.
 
 ## Demo
 
-![Mind Meld demo — human vs Gemini 3.5 Flash](media/mindmeld-demo.gif)
+<video src="https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4" controls width="600">
+  Your browser can't play this video inline —
+  <a href="https://github.com/IanNorris/mindmeld/releases/download/demo-v1/mindmeld-demo.mp4">download the MP4</a>.
+</video>
 
 *A human (left) opening with "sausage" vs an AI on Gemini 3.5 Flash — it takes
 five rounds (sausage → link → leash → dachshund → **park**) to converge, with
 the AI tracking the sausage → dog → wiener theme. Recorded from the web UI with
 Playwright; see [Recording a demo](#recording-a-demo).*
+
 
 
 
@@ -151,9 +155,10 @@ mindmeld-web &                       # start the server on :8000
 python tools/record_demo.py          # writes media/*.webm
 ```
 
-Convert the recording to a GIF/MP4 with ffmpeg (the committed
-`media/mindmeld-demo.gif` was produced this way). On NixOS, run the script
-inside `tools/demo-shell.nix` so headless Chromium has fontconfig and fonts.
+Convert the recording to an MP4/GIF with ffmpeg (the committed
+`media/mindmeld-demo.mp4`, embedded above via a GitHub release asset, was
+produced this way). On NixOS, run the script inside `tools/demo-shell.nix` so
+headless Chromium has fontconfig and fonts.
 
 ## License
 

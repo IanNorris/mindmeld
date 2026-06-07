@@ -5,3 +5,4 @@ server.log
 nohup.out
 
 media/*.webm
+media/*.gif
