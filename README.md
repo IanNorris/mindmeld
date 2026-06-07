@@ -18,45 +18,64 @@ each AI player uses, **at the start of every game**.
 
 ## Running
 
-From the project root:
+### Terminal
 
 ```bash
 python -m mindmeld
 ```
 
-You'll be asked, for each of the two players:
+You'll be asked, for each of the two players: **Human or AI?**, **which model**
+(if AI), a display name, and the maximum number of rounds. Any combination
+works: Human vs Human, Human vs AI, or AI vs AI.
 
-1. **Human or AI?**
-2. If AI: **which model** (Claude, GPT, Gemini, …, discovered live from the SDK)
-3. A display name
-4. Finally, the maximum number of rounds.
+### Web / dev server
 
-Any combination works: Human vs Human, Human vs AI, or AI vs AI (great for
-watching two different models try to read each other's mind).
+```bash
+python -m mindmeld.web         # or ./run_server.sh
+```
+
+Then open `http://localhost:8000`. The web UI offers two modes:
+
+- **Local game** — both players on one screen (pick Human/AI + model each),
+  just like the terminal version.
+- **Play online** — *matchmaking*: enter a name and you're paired with the
+  **next player who joins**. Each player plays from their own browser and
+  submits only their own word; you can also choose "play vs an AI now" if you
+  don't want to wait. Open the page in two browser tabs/devices to play a
+  human-vs-human match.
+
+The web UI also shows each **AI's reasoning streaming live** ("thinking" panes)
+as it decides its word, via a server-sent-events (SSE) stream.
 
 ### Environment
 
 - Requires the `copilot` Python SDK (bundled in this sandbox) and a valid
   Copilot auth token in the environment (`COPILOT_SDK_AUTH_TOKEN` /
   `GITHUB_TOKEN`).
-- `MINDMELD_NOCLEAR=1` disables the between-turn screen clears (useful for
-  transcripts, logging, or piping output).
+- `MINDMELD_NOCLEAR=1` disables the terminal's between-turn screen clears
+  (useful for transcripts, logging, or piping output).
 
 ## How the AI plays
 
 Each AI player owns its own Copilot SDK **session** bound to the chosen model,
-with a system prompt explaining the convergence game. Each round it receives the
-full shared word history and the previous round's two words, and is asked for a
-single new (never-reused) word. Separate sessions keep the two AIs from "seeing"
-each other's reasoning — they only know the words that were revealed, exactly
-like human players.
+with a system prompt explaining the convergence game. To avoid repetitive
+openings, an AI's **first** word is drawn at random from a curated dictionary
+(`mindmeld/dictionary.py`); from round two the model iterates, receiving the
+full shared word history and the previous round's two words and replying in a
+`THINKING:` / `WORD:` format so its reasoning can be shown. Separate sessions
+keep two AIs from "seeing" each other's reasoning — they only know the revealed
+words, exactly like human players.
 
 ## Project layout
 
 | File | Purpose |
 |------|---------|
-| `mindmeld/models.py`  | Lists available models via the SDK (raw RPC). |
-| `mindmeld/players.py` | `HumanPlayer` and `AIPlayer` (Copilot SDK). |
-| `mindmeld/engine.py`  | Round loop and convergence detection. |
-| `mindmeld/cli.py`     | Setup menu + game presentation. |
-| `tests/`              | Pure-logic tests (no network). |
+| `mindmeld/models.py`     | Lists available models via the SDK (raw RPC). |
+| `mindmeld/dictionary.py` | Curated common-word list for AI openers. |
+| `mindmeld/players.py`    | `HumanPlayer` and `AIPlayer` (Copilot SDK, streaming). |
+| `mindmeld/engine.py`     | Round loop and convergence detection. |
+| `mindmeld/cli.py`        | Terminal setup menu + game presentation. |
+| `mindmeld/web.py`        | Web server: matchmaking lobby, games, SSE stream. |
+| `mindmeld/web_page.py`   | Single-page web UI (local + online modes). |
+| `tests/`                 | Pure-logic tests (no network). |
+

@@ -1,4 +1,13 @@
-"""The single-page HTML/JS frontend for the Mind Meld web server."""
+"""The single-page HTML/JS frontend for the Mind Meld web server.
+
+Supports two modes:
+  * Local  — both players on one screen (pick Human/AI + model each).
+  * Online — matchmaking: players are paired as they join, each plays from
+    their own browser and submits only their own word.
+
+A shared game view renders the board, live AI "thinking" panes (fed by an
+SSE stream), and per-round word entry.
+"""
 
 INDEX_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -13,7 +22,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   body { margin:0; font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,sans-serif;
          background:radial-gradient(1200px 600px at 50% -10%,#1b2a48,#0e1726);
          color:var(--txt); min-height:100vh; }
-  .wrap { max-width:680px; margin:0 auto; padding:24px 16px 60px; }
+  .wrap { max-width:720px; margin:0 auto; padding:24px 16px 60px; }
   h1 { font-weight:800; letter-spacing:.5px; margin:.2em 0 0; font-size:30px; }
   .sub { color:#9fb0c9; margin:4px 0 22px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
@@ -38,9 +47,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   td.rnum { color:#7e8db0; font-weight:700; }
   .word { font-weight:700; font-size:16px; }
   .think { color:#9fb0c9; font-size:12px; margin-top:3px; line-height:1.35;
-           max-width:230px; font-style:italic; }
-  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px;
-          background:#23324e; color:#cdd9ee; }
+           max-width:250px; font-style:italic; }
   .banner { text-align:center; padding:16px; border-radius:12px; font-weight:800;
             font-size:20px; margin-top:8px; }
   .win { background:rgba(90,209,192,.15); color:var(--accent);
@@ -53,6 +60,20 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .hint { color:#9fb0c9; font-size:13px; margin:6px 0 0; }
   .spin { color:var(--warn); }
   a { color:var(--accent2); }
+  /* live thinking panes */
+  .panes { display:flex; gap:12px; margin:8px 0 4px; }
+  .pane { flex:1; background:#0f1a2e; border:1px solid var(--line);
+          border-radius:10px; padding:10px 12px; min-height:64px; }
+  .pane h4 { margin:0 0 6px; font-size:13px; color:#cdd9ee; display:flex;
+             justify-content:space-between; }
+  .pane .status { font-size:11px; color:#7e8db0; font-weight:600; }
+  .pane .live { font-size:12.5px; line-height:1.4; color:#bcd; white-space:pre-wrap;
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace; min-height:20px; }
+  .pane.ready { border-color:rgba(90,209,192,.55); }
+  .modesel { display:flex; gap:12px; }
+  .modesel button { flex:1; padding:18px; font-size:16px; }
+  .tag { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
+         background:#23324e; color:#cdd9ee; margin-left:6px; }
 </style>
 </head>
 <body>
@@ -60,20 +81,62 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <h1>🧠 Mind Meld</h1>
   <div class="sub">Think of a word. Say it together. Converge.</div>
 
-  <!-- SETUP -->
-  <div id="setup" class="card">
+  <!-- HOME -->
+  <div id="home" class="card">
+    <div class="modesel">
+      <button id="onlineBtn">🌐 Play online<br/><span style="font-weight:500;font-size:12px">match with the next player who joins</span></button>
+      <button id="localBtn" class="ghost">🖥️ Local game<br/><span style="font-weight:500;font-size:12px">two players on this screen</span></button>
+    </div>
+  </div>
+
+  <!-- ONLINE SETUP -->
+  <div id="onlineSetup" class="card" style="display:none">
+    <label>Your name</label>
+    <input id="onName" placeholder="Player"/>
+    <label>Opponent</label>
+    <select id="onVs">
+      <option value="human">A human (wait to be matched)</option>
+      <option value="ai">An AI (play right now)</option>
+    </select>
+    <div id="onModelWrap" style="display:none">
+      <label>AI model</label>
+      <select id="onModel"></select>
+    </div>
+    <div class="btns">
+      <button id="findBtn">Find a match</button>
+      <button class="ghost" onclick="location.reload()">Back</button>
+    </div>
+  </div>
+
+  <!-- WAITING ROOM -->
+  <div id="waiting" class="card" style="display:none">
+    <div class="turnbox">
+      <p class="spin" style="font-size:18px;font-weight:700">⏳ Waiting for an opponent…</p>
+      <p class="hint">You'll be matched with the next player who joins.</p>
+      <div class="btns" style="justify-content:center">
+        <button id="cancelBtn" class="ghost">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOCAL SETUP -->
+  <div id="localSetup" class="card" style="display:none">
     <div class="row" id="playerCfgs"></div>
     <label>Max rounds</label>
     <input id="maxRounds" type="number" min="1" max="30" value="12"/>
-    <div class="btns"><button id="startBtn">Start game</button></div>
-    <div class="hint">Tip: pick two different AI models and watch them try to read each
-      other's mind.</div>
+    <div class="btns">
+      <button id="startBtn">Start game</button>
+      <button class="ghost" onclick="location.reload()">Back</button>
+    </div>
+    <div class="hint">Tip: pick two different AI models and watch them try to read
+      each other's mind.</div>
   </div>
 
   <!-- GAME -->
   <div id="game" class="card" style="display:none">
     <div id="vs" class="sub" style="text-align:center;font-weight:700"></div>
     <div id="banner"></div>
+    <div id="panes" class="panes"></div>
     <div id="turn"></div>
     <div class="err" id="err"></div>
     <table id="board" style="display:none">
@@ -82,7 +145,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
     </table>
     <div class="used" id="used"></div>
     <div class="btns">
-      <button id="newBtn" class="ghost" style="display:none">New game</button>
+      <button id="newBtn" class="ghost" style="display:none"
+              onclick="location.reload()">New game</button>
     </div>
   </div>
 </div>
@@ -90,99 +154,193 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <script>
 let MODELS = [];
 let STATE = null;
+let MODE = null;            // 'online' | 'local'
+let ME = {slot:null, token:null};
+let ES = null;             // EventSource for live updates
+let TICKET = null, POLL = null;
+let liveText = {p1:'', p2:''};
 
 const $ = s => document.querySelector(s);
 const el = (t,p={}) => Object.assign(document.createElement(t), p);
+const show = id => ['home','onlineSetup','waiting','localSetup','game']
+  .forEach(s => $('#'+s).style.display = (s===id?'block':'none'));
 
-function playerCfg(slot){
-  const box = el('div');
-  box.innerHTML = `
-    <label>Player ${slot}</label>
-    <select class="ptype" data-slot="${slot}">
-      <option value="human">Human</option>
-      <option value="ai">AI</option>
-    </select>
-    <label>Model</label>
-    <select class="pmodel" data-slot="${slot}" disabled></select>
-    <label>Name</label>
-    <input class="pname" data-slot="${slot}" placeholder="Player ${slot}"/>`;
-  return box;
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
-function fillModels(sel){
-  sel.innerHTML = '';
-  MODELS.forEach(m => sel.appendChild(el('option',{value:m.id,textContent:m.name})));
-}
-
-async function init(){
-  const cfgs = $('#playerCfgs');
-  cfgs.appendChild(playerCfg(1));
-  cfgs.appendChild(playerCfg(2));
-  MODELS = await (await fetch('/api/models')).json();
-  document.querySelectorAll('.pmodel').forEach(fillModels);
-  document.querySelectorAll('.ptype').forEach(sel => {
-    sel.addEventListener('change', e => {
-      const slot = e.target.dataset.slot;
-      const m = document.querySelector(`.pmodel[data-slot="${slot}"]`);
-      m.disabled = e.target.value !== 'ai';
-    });
-  });
-  $('#startBtn').addEventListener('click', startGame);
-  $('#newBtn').addEventListener('click', () => location.reload());
-}
-
-function readCfg(slot){
-  const type = document.querySelector(`.ptype[data-slot="${slot}"]`).value;
-  const model = document.querySelector(`.pmodel[data-slot="${slot}"]`).value;
-  const name = document.querySelector(`.pname[data-slot="${slot}"]`).value;
-  return {type, model, name};
-}
-
-async function startGame(){
-  const body = {p1: readCfg(1), p2: readCfg(2),
-                max_rounds: parseInt($('#maxRounds').value)||12};
-  STATE = await postJSON('/api/new', body);
-  $('#setup').style.display='none';
-  $('#game').style.display='block';
-  $('#vs').textContent = `${STATE.p1.label}   vs   ${STATE.p2.label}`;
-  $('#h1').textContent = STATE.p1.name;
-  $('#h2').textContent = STATE.p2.name;
-  render();
-}
-
 async function postJSON(url, body){
   const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
-                            body:JSON.stringify(body)});
+                            body:JSON.stringify(body||{})});
   return r.json();
 }
 
+/* ---------------- init / home ---------------- */
+async function init(){
+  MODELS = await (await fetch('/api/models')).json();
+  fillModels($('#onModel'));
+  buildLocalCfgs();
+  $('#onlineBtn').onclick = ()=>{ MODE='online'; show('onlineSetup'); };
+  $('#localBtn').onclick = ()=>{ MODE='local'; show('localSetup'); };
+  $('#onVs').onchange = e =>
+    $('#onModelWrap').style.display = (e.target.value==='ai'?'block':'none');
+  $('#findBtn').onclick = findMatch;
+  $('#cancelBtn').onclick = cancelMatch;
+  $('#startBtn').onclick = startLocal;
+}
+function fillModels(sel){
+  sel.innerHTML='';
+  MODELS.forEach(m => sel.appendChild(el('option',{value:m.id,textContent:m.name})));
+}
+
+/* ---------------- online matchmaking ---------------- */
+async function findMatch(){
+  const name = $('#onName').value.trim() || 'Player';
+  const vs = $('#onVs').value;
+  const model = $('#onModel').value;
+  const t = await postJSON('/api/join', {name, vs, model});
+  TICKET = t.ticket;
+  if(t.status==='matched'){ onMatched(t); return; }
+  show('waiting');
+  POLL = setInterval(async ()=>{
+    const p = await postJSON('/api/poll', {ticket:TICKET});
+    if(p.status==='matched'){ clearInterval(POLL); POLL=null; onMatched(p); }
+  }, 1200);
+}
+async function cancelMatch(){
+  if(POLL){ clearInterval(POLL); POLL=null; }
+  if(TICKET) await postJSON('/api/cancel', {ticket:TICKET});
+  location.reload();
+}
+async function onMatched(t){
+  ME = {slot:t.slot, token:t.token};
+  const st = await postJSON('/api/state', {game_id:t.game_id});
+  openGame(st);
+}
+
+/* ---------------- local mode ---------------- */
+function buildLocalCfgs(){
+  const cfgs = $('#playerCfgs'); cfgs.innerHTML='';
+  [1,2].forEach(slot => {
+    const box = el('div');
+    box.innerHTML = `
+      <label>Player ${slot}</label>
+      <select class="ptype" data-slot="${slot}">
+        <option value="human">Human</option><option value="ai">AI</option></select>
+      <label>Model</label>
+      <select class="pmodel" data-slot="${slot}" disabled></select>
+      <label>Name</label>
+      <input class="pname" data-slot="${slot}" placeholder="Player ${slot}"/>`;
+    cfgs.appendChild(box);
+  });
+  document.querySelectorAll('.pmodel').forEach(fillModels);
+  document.querySelectorAll('.ptype').forEach(sel =>
+    sel.onchange = e => {
+      const m = document.querySelector(`.pmodel[data-slot="${e.target.dataset.slot}"]`);
+      m.disabled = e.target.value!=='ai';
+    });
+}
+function readLocalCfg(slot){
+  return {
+    type: document.querySelector(`.ptype[data-slot="${slot}"]`).value,
+    model: document.querySelector(`.pmodel[data-slot="${slot}"]`).value,
+    name: document.querySelector(`.pname[data-slot="${slot}"]`).value,
+  };
+}
+async function startLocal(){
+  const body = {p1:readLocalCfg(1), p2:readLocalCfg(2),
+                max_rounds: parseInt($('#maxRounds').value)||12};
+  const st = await postJSON('/api/new', body);
+  ME = {slot:null, token:null};
+  openGame(st);
+}
+
+/* ---------------- shared game view ---------------- */
+function openGame(st){
+  STATE = st;
+  show('game');
+  $('#vs').innerHTML = `${escapeHtml(st.p1.label)} &nbsp;vs&nbsp; ${escapeHtml(st.p2.label)}`
+    + (MODE==='online' ? `<span class="tag">you are ${ME.slot==='p1'?st.p1.name:st.p2.name}</span>` : '');
+  $('#h1').textContent = st.p1.name;
+  $('#h2').textContent = st.p2.name;
+  connectSSE(st.game_id);
+  render();
+}
+
+function connectSSE(gameId){
+  if(ES) ES.close();
+  ES = new EventSource('/api/stream?game_id='+encodeURIComponent(gameId));
+  ES.onmessage = ev => {
+    let d; try { d = JSON.parse(ev.data); } catch(e){ return; }
+    if(d.kind==='round_start'){
+      liveText = {p1:'', p2:''}; renderPanes('thinking');
+    } else if(d.kind==='delta'){
+      liveText[d.slot] = (liveText[d.slot]||'') + d.text; renderPanes('thinking');
+    } else if(d.kind==='submitted'){
+      markSubmitted(d.slot);
+    } else if(d.kind==='round_done'){
+      // Refresh authoritative state so both browsers update together.
+      refreshState();
+    }
+  };
+}
+async function refreshState(){
+  const st = await postJSON('/api/state', {game_id:STATE.game_id});
+  STATE = st; render();
+}
+
+function slotIsAI(slot){
+  return slot==='p1' ? !STATE.p1.human : !STATE.p2.human;
+}
+function slotName(slot){ return slot==='p1'?STATE.p1.name:STATE.p2.name; }
+
+function renderPanes(phase){
+  // Show a live pane per player during/after a round.
+  const wrap = $('#panes'); wrap.innerHTML='';
+  if(STATE.finished && phase!=='thinking'){ wrap.style.display='none'; return; }
+  wrap.style.display='flex';
+  ['p1','p2'].forEach(slot => {
+    const ai = slotIsAI(slot);
+    const submitted = (STATE.submitted||[]).includes(slot);
+    const txt = liveText[slot];
+    let status = '';
+    if(ai) status = txt ? 'thinking…' : 'waiting';
+    else status = submitted ? '✓ ready' : 'choosing…';
+    const body = ai
+      ? (txt ? escapeHtml(txt) : '…')
+      : (submitted ? '🔒 word locked in' : '✏️ choosing a word…');
+    const pane = el('div', {className:'pane'+(submitted?' ready':'')});
+    pane.innerHTML = `<h4>${escapeHtml(slotName(slot))}`+
+      `<span class="status">${status}</span></h4>`+
+      `<div class="live">${body}</div>`;
+    wrap.appendChild(pane);
+  });
+}
+function markSubmitted(slot){
+  if(!STATE.submitted) STATE.submitted=[];
+  if(!STATE.submitted.includes(slot)) STATE.submitted.push(slot);
+  renderPanes('thinking');
+}
+
 function render(){
-  // board
   const rows = $('#rows'); rows.innerHTML='';
   STATE.rounds.forEach(r => {
     const tr = el('tr'); if(r.matched) tr.className='match';
     const cell = (word, reason) => {
-      const think = reason
-        ? `<div class="think">💭 ${escapeHtml(reason)}</div>` : '';
+      const think = reason ? `<div class="think">💭 ${escapeHtml(reason)}</div>`:'';
       return `<td><div class="word">${escapeHtml(word)}</div>${think}</td>`;
     };
-    tr.innerHTML = `<td class="rnum">${r.round}</td>`+
-                   cell(r.w1, r.r1) + cell(r.w2, r.r2) +
+    tr.innerHTML = `<td class="rnum">${r.round}</td>`+cell(r.w1,r.r1)+cell(r.w2,r.r2)+
                    `<td>${r.matched?'🧠 meld!':''}</td>`;
     rows.appendChild(tr);
   });
   $('#board').style.display = STATE.rounds.length ? 'table':'none';
   $('#used').textContent = STATE.used.length ? 'Used: '+STATE.used.join(', ') : '';
   $('#err').textContent = STATE.error || '';
-
+  renderPanes('idle');
   if(STATE.finished){ renderFinished(); return; }
   $('#banner').innerHTML='';
   renderTurn();
-}
-
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function renderFinished(){
@@ -201,64 +359,86 @@ function renderFinished(){
 function renderTurn(){
   const t = $('#turn');
   const n = STATE.round_no + 1;
+  const lastHint = STATE.last
+    ? `<p class="hint">Last round — ${escapeHtml(STATE.p1.name)}: “${escapeHtml(STATE.last.w1)}”, `+
+      `${escapeHtml(STATE.p2.name)}: “${escapeHtml(STATE.last.w2)}”. Find a word that bridges them.</p>`
+    : '';
+
+  if(MODE==='online'){
+    const mine = ME.slot;
+    const already = (STATE.submitted||[]).includes(mine);
+    if(already){
+      t.innerHTML = `<div class="turnbox"><p class="hint">Round ${n}.</p>${lastHint}`+
+        `<p class="spin">⏳ waiting for your opponent…</p></div>`;
+      return;
+    }
+    t.innerHTML = `<div class="turnbox"><p class="hint">Round ${n}. Your word (hidden):</p>${lastHint}`+
+      `<input type="password" id="wordin" autocomplete="off"/>`+
+      `<div class="btns" style="justify-content:center">`+
+      `<button id="goBtn">Say it!</button></div></div>`;
+    wireSubmit(words => submitOnline());
+    return;
+  }
+
+  // local mode: collect words for all human slots on this screen
   const humans = [];
   if(STATE.p1.human) humans.push(['p1', STATE.p1.name]);
   if(STATE.p2.human) humans.push(['p2', STATE.p2.name]);
-  const lastHint = STATE.last
-    ? `<p class="hint">Last round — ${STATE.p1.name}: “${STATE.last.w1}”, `+
-      `${STATE.p2.name}: “${STATE.last.w2}”. Find a word that bridges them.</p>` : '';
-
-  if(humans.length === 0){
-    t.innerHTML = `<div class="turnbox"><p class="hint">Round ${n}. `+
-      `Two AIs are thinking…</p>${lastHint}`+
-      `<div class="btns" style="justify-content:center">`+
+  if(humans.length===0){
+    t.innerHTML = `<div class="turnbox"><p class="hint">Round ${n}. Two AIs are thinking…</p>`+
+      `${lastHint}<div class="btns" style="justify-content:center">`+
       `<button id="goBtn">Reveal round ${n}</button></div></div>`;
-    $('#goBtn').addEventListener('click', ()=>submitRound({}));
+    $('#goBtn').onclick = ()=>submitLocal({});
     return;
   }
-  let inputs = humans.map(([k,name]) =>
-    `<label>${name}'s word (hidden)</label>`+
-    `<input type="password" class="wordin" data-key="${k}" autocomplete="off"/>`
-  ).join('');
+  const inputs = humans.map(([k,name]) =>
+    `<label>${escapeHtml(name)}'s word (hidden)</label>`+
+    `<input type="password" class="wordin" data-key="${k}" autocomplete="off"/>`).join('');
   const multi = humans.length===2
     ? `<p class="hint">Both players enter a word without peeking at each other.</p>`:'';
   t.innerHTML = `<div class="turnbox"><p class="hint">Round ${n}.</p>${lastHint}${multi}`+
     `${inputs}<div class="btns" style="justify-content:center">`+
     `<button id="goBtn">Say it!</button></div></div>`;
-  const go = $('#goBtn');
   const fire = ()=>{
     const words={};
     document.querySelectorAll('.wordin').forEach(i=>words[i.dataset.key]=i.value);
-    submitRound(words);
+    submitLocal(words);
   };
-  go.addEventListener('click', fire);
+  $('#goBtn').onclick = fire;
   document.querySelectorAll('.wordin').forEach(i =>
     i.addEventListener('keydown', e=>{ if(e.key==='Enter') fire(); }));
   const first = document.querySelector('.wordin'); if(first) first.focus();
 }
 
-async function submitRound(words){
+function wireSubmit(fn){
+  const go = $('#goBtn'), inp = $('#wordin');
+  const fire = ()=>fn();
+  go.onclick = fire;
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') fire(); });
+  inp.focus();
+}
+
+async function submitOnline(){
+  const inp = $('#wordin'), go = $('#goBtn');
+  const word = inp.value.trim();
+  if(!word){ $('#err').textContent='Enter a word.'; return; }
+  go.disabled=true; go.textContent='Sent';
+  let res;
+  try { res = await postJSON('/api/move', {game_id:STATE.game_id, token:ME.token, word}); }
+  catch(e){ res = {error:'Network error — try again.'}; }
+  if(res && Array.isArray(res.rounds)){ STATE = res; render(); }
+  else { $('#err').textContent=(res&&res.error)||'Error'; go.disabled=false; go.textContent='Say it!'; }
+}
+
+async function submitLocal(words){
   const go = $('#goBtn'); if(go){ go.disabled=true; go.textContent='Thinking…'; }
   $('#turn').insertAdjacentHTML('beforeend',
-    '<p class="hint spin" id="spin">⏳ waiting for both words…</p>');
+    '<p class="hint spin" id="spin">⏳ resolving round…</p>');
   let res;
-  try {
-    res = await postJSON('/api/round', {game_id:STATE.game_id, words});
-  } catch(e){
-    res = {error: 'Network error contacting the server — please try again.'};
-  }
-  const spin = $('#spin'); if(spin) spin.remove();
-  // A well-formed response carries the full game state (it has `rounds`).
-  if(res && Array.isArray(res.rounds)){
-    STATE = res;
-    render();
-  } else {
-    // Error-only / malformed response: keep the previous good state, attach the
-    // error, and re-render so the correct turn UI (and button) comes back. The
-    // spinner never stays stuck.
-    STATE.error = (res && res.error) || 'Unexpected error — try again.';
-    render();
-  }
+  try { res = await postJSON('/api/round', {game_id:STATE.game_id, words}); }
+  catch(e){ res = {error:'Network error — try again.'}; }
+  if(res && Array.isArray(res.rounds)){ STATE = res; render(); }
+  else { STATE.error=(res&&res.error)||'Unexpected error — try again.'; render(); }
 }
 
 init();

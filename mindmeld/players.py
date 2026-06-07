@@ -7,7 +7,10 @@ import random
 import re
 from abc import ABC, abstractmethod
 
-from copilot.generated.session_events import AssistantMessageData
+from copilot.generated.session_events import (
+    AssistantMessageData,
+    AssistantMessageDeltaData,
+)
 from copilot.session import PermissionHandler
 
 from .dictionary import random_word
@@ -134,6 +137,9 @@ class AIPlayer(Player):
         # Reasoning captured from the most recent get_word() call.
         self.last_reasoning: str = ""
         self._rng = random.Random()
+        # Optional callback invoked with each streamed text fragment as the
+        # model "thinks out loud". Set by the web layer to push live updates.
+        self.on_delta = None
 
     @property
     def label(self) -> str:
@@ -146,8 +152,19 @@ class AIPlayer(Player):
                 model=self.model_id,
                 system_message={"mode": "replace", "content": SYSTEM_MESSAGE},
                 available_tools=[],
+                streaming=True,
             )
+            self._session.on(self._on_event)
         return self._session
+
+    def _on_event(self, event) -> None:
+        """Forward streamed message fragments to on_delta (if registered)."""
+        data = getattr(event, "data", None)
+        if isinstance(data, AssistantMessageDeltaData) and self.on_delta:
+            try:
+                self.on_delta(data.delta_content)
+            except Exception:
+                pass
 
     def _build_prompt(self, round_no, you, partner, used) -> str:
         if round_no == 1:
@@ -176,6 +193,11 @@ class AIPlayer(Player):
         if round_no == 1:
             word = random_word(self._rng, exclude=used)
             self.last_reasoning = f"Opened with a random dictionary word: '{word}'."
+            if self.on_delta:
+                try:
+                    self.on_delta(f"THINKING: {self.last_reasoning}\nWORD: {word}")
+                except Exception:
+                    pass
             return word
         session = await self._ensure_session()
         prompt = self._build_prompt(round_no, you, partner, used)
